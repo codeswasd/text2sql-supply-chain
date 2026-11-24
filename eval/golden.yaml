@@ -1,0 +1,94 @@
+# Golden test set: question -> reference SQL (DuckDB) -> tables a good retriever must surface.
+# Cases 1-10 are adapted from the verified queries in semantic/supply_chain_network.yaml.
+- id: active_plants
+  difficulty: easy
+  question: How many active manufacturing plants do we have?
+  expected_tables: [mfg_plant]
+  sql: SELECT COUNT(*) AS active_plant_count FROM mfg_plant WHERE is_active = TRUE
+
+- id: aerospace_orders
+  difficulty: medium
+  question: How many orders are for products in the AEROSPACE business line?
+  expected_tables: [orders, product]
+  sql: SELECT COUNT(*) AS aerospace_order_count FROM orders AS o JOIN product AS p ON o.product_id = p.product_id WHERE p.business_line = 'AEROSPACE'
+
+- id: finished_goods_qty
+  difficulty: easy
+  question: What is the total quantity on hand of finished goods across all plants?
+  expected_tables: [mfg_inventory]
+  sql: SELECT SUM(quantity_on_hand) AS total_finished_goods_quantity FROM mfg_inventory WHERE product_id IS NOT NULL
+
+- id: top_customers
+  difficulty: medium
+  question: Who are the top 5 customers by total order value?
+  expected_tables: [orders, customer]
+  sql: SELECT c.customer_name, SUM(o.total_price) AS total_order_value FROM orders AS o JOIN customer AS c ON o.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_order_value DESC LIMIT 5
+
+- id: recent_orders
+  difficulty: medium
+  question: How many orders were placed since November 1, 2024?
+  expected_tables: [orders]
+  sql: SELECT COUNT(*) AS recent_order_count FROM orders WHERE CAST(order_date AS TIMESTAMPTZ) >= TIMESTAMPTZ '2024-11-01'
+
+- id: low_inventory_materials
+  difficulty: hard
+  question: Which raw materials are below safety stock at each plant and will not be replenished in time, given lead time and its variability?
+  expected_tables: [mfg_inventory, mfg_plant, raw_material]
+  sql: SELECT mp.mfg_plant_name, rm.material_name, mi.quantity_on_hand, mi.safety_stock_level, mi.days_forward_coverage, mi.material_lead_time FROM mfg_inventory AS mi JOIN mfg_plant AS mp ON mi.mfg_plant_id = mp.mfg_plant_id JOIN raw_material AS rm ON mi.material_id = rm.material_id WHERE mi.quantity_on_hand < mi.safety_stock_level AND mi.days_forward_coverage <= mi.material_lead_time + mi.lead_time_variability
+
+- id: late_shipments
+  difficulty: easy
+  question: How many shipments were delivered later than expected?
+  expected_tables: [shipment]
+  sql: SELECT COUNT(*) AS late_shipment_count FROM shipment WHERE actual_delivery_date > expected_delivery_date
+
+- id: plant_capacity
+  difficulty: medium
+  question: For each plant, show square footage, number of employees and how many distinct products it holds in inventory, most products first.
+  expected_tables: [mfg_plant, mfg_inventory]
+  sql: SELECT mp.mfg_plant_name, mp.square_footage, mp.number_of_employees, COUNT(DISTINCT mi.product_id) AS products_produced FROM mfg_plant mp LEFT JOIN mfg_inventory mi ON mp.mfg_plant_id = mi.mfg_plant_id WHERE mi.product_id IS NOT NULL GROUP BY mp.mfg_plant_name, mp.square_footage, mp.number_of_employees ORDER BY products_produced DESC
+
+- id: material_transfer_cost
+  difficulty: hard
+  question: For raw materials running low at a plant, compare the cost of buying from the supplier with the cost of transferring excess stock from another plant, including transport surcharges.
+  expected_tables: [mfg_inventory, mfg_plant, raw_material, transport_cost_surcharge]
+  sql: >-
+    WITH low_inventory AS (SELECT mi.mfg_plant_id AS low_plant_id, mp.mfg_plant_name AS low_plant_name, mi.material_id, rm.material_name, mi.quantity_on_hand AS low_qty, mi.replenishment_point, (mi.replenishment_point - mi.quantity_on_hand) AS units_needed, rm.material_cost, rm.plant_transport_cost FROM mfg_inventory AS mi JOIN mfg_plant AS mp ON mi.mfg_plant_id = mp.mfg_plant_id JOIN raw_material AS rm ON mi.material_id = rm.material_id WHERE mi.quantity_on_hand < mi.safety_stock_level AND mi.days_forward_coverage <= mi.material_lead_time + mi.lead_time_variability),
+    excess_inventory AS (SELECT mi.mfg_plant_id AS excess_plant_id, mp.mfg_plant_name AS excess_plant_name, mi.material_id, mi.quantity_on_hand AS excess_qty, mi.replenishment_point AS excess_replenishment_point, (mi.quantity_on_hand - mi.replenishment_point) AS available_to_transfer FROM mfg_inventory AS mi JOIN mfg_plant AS mp ON mi.mfg_plant_id = mp.mfg_plant_id WHERE mi.quantity_on_hand > 3 * mi.safety_stock_level AND mi.days_forward_coverage > 2 * mi.material_lead_time)
+    SELECT l.low_plant_name, l.material_name, l.units_needed, l.material_cost * l.units_needed AS supplier_purchase_cost, e.excess_plant_name, LEAST(l.units_needed, e.available_to_transfer) AS transferrable_units, l.plant_transport_cost * LEAST(l.units_needed, e.available_to_transfer) * tcs.transport_cost_surcharge AS transfer_cost FROM low_inventory AS l LEFT JOIN excess_inventory AS e ON l.material_id = e.material_id LEFT JOIN transport_cost_surcharge AS tcs ON e.excess_plant_id = tcs.source_facility_id AND l.low_plant_id = tcs.destination_facility_id ORDER BY l.low_plant_name, l.material_name
+
+- id: steel_copper_lead_time
+  difficulty: medium
+  question: What are the lead times for raw materials containing steel or copper?
+  expected_tables: [mfg_inventory, raw_material]
+  sql: SELECT DISTINCT r.material_name, i.material_lead_time FROM mfg_inventory AS i LEFT OUTER JOIN raw_material AS r ON i.material_id = r.material_id WHERE LOWER(r.material_name) LIKE '%steel%' OR LOWER(r.material_name) LIKE '%copper%' ORDER BY r.material_name
+
+- id: supplier_count
+  difficulty: easy
+  question: How many suppliers are there?
+  expected_tables: [suppliers]
+  sql: SELECT COUNT(*) AS supplier_count FROM suppliers
+
+- id: customer_count
+  difficulty: easy
+  question: How many customers do we have?
+  expected_tables: [customer]
+  sql: SELECT COUNT(*) AS customer_count FROM customer
+
+- id: products_by_line
+  difficulty: easy
+  question: How many products are in each business line?
+  expected_tables: [product]
+  sql: SELECT business_line, COUNT(*) AS product_count FROM product GROUP BY business_line
+
+- id: bom_rows
+  difficulty: easy
+  question: How many rows are in the bill of materials?
+  expected_tables: [bill_of_materials]
+  sql: SELECT COUNT(*) AS bom_row_count FROM bill_of_materials
+
+- id: shipment_count
+  difficulty: easy
+  question: How many shipments are recorded?
+  expected_tables: [shipment]
+  sql: SELECT COUNT(*) AS shipment_count FROM shipment
