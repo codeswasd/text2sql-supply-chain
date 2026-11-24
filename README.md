@@ -13,7 +13,16 @@ sql:    SELECT COUNT(*) FROM mfg_plant WHERE is_active
 tokens in/out: <in>/<out> | latency: <s>s | attempts: 1
 ```
 
+## At a glance
+
+| 11 tables | 1,174 rows | 14 declared relationships | 15 golden questions (8 easy, 5 medium, 2 hard) | 30 tests |
+|---|---|---|---|---|
+
+![Request path](docs/pipeline.png)
+
 ## How it works
+
+The same flow as a diagram that renders on GitHub:
 
 ```mermaid
 flowchart LR
@@ -72,8 +81,30 @@ reference SQL query and the tables it needs.
 
 | Metric | Result |
 |---|---|
-| Table recall@3 | _run `python -m eval.run_eval --retrieval-only`_ |
-| Execution accuracy | _run `python -m eval.run_eval`_ |
+| Table recall@3, BM25 only | 80% (12 of 15 cases) |
+| Table recall@3, BM25 + relationship expansion | **100% (15 of 15 cases)** |
+| Execution accuracy | Pending a full run with an API key: `python -m eval.run_eval` |
+
+Recall is measured on the retriever alone, so it needs no API key and CI reproduces it.
+Relationship expansion lifts recall@3 from 80% to 100% because join questions often
+name only one side of a join.
+
+![Table recall at k](docs/recall_at_k.png)
+
+The questions and the tables they need:
+
+![Golden set](docs/golden_set.png)
+
+## Data and schema
+
+The warehouse is 11 CSV tables. The semantic model declares 14 relationships between them.
+
+![Schema graph](docs/schema_graph.png)
+
+![Warehouse rows](docs/warehouse_rows.png)
+
+Regenerate every figure with `python docs/make_figures.py` (needs `matplotlib`). The
+numbers come from the retriever, the golden set and the CSVs, so they cannot drift.
 
 ## Project layout
 
@@ -81,6 +112,7 @@ reference SQL query and the tables it needs.
 t2s/         retriever, prompt + Claude call, validator, DuckDB executor, CLI
 eval/        golden.yaml (15 cases) and the eval runner
 tests/       validator, retriever, golden-SQL and retry tests
+docs/        figures (PNG) and make_figures.py, which regenerates them
 .github/     CI: pytest + retrieval-only eval (no API key)
 data/        11 supply-chain CSV tables
 semantic/    Snowflake Cortex Analyst semantic model
@@ -90,9 +122,18 @@ snowflake/   original Snowflake Intelligence setup (Cortex Search, Streamlit app
 
 ## Where it fails
 
-_To be filled after a full run of `python -m eval.run_eval`: list the questions marked
-`wrong` or `error` in `eval/results.md` and the cause of each (retrieval miss, wrong
-join, ambiguous question)._
+Known limits, from what has been measured:
+
+- **Lexical retrieval.** BM25 alone misses 3 of 15 cases at k=3. It matches words, not
+  meaning, so a question that uses none of the words in a table's docs can miss it.
+  Relationship expansion recovers all three on this golden set.
+- **Small golden set.** 15 questions is enough to catch regressions, not to claim a
+  general accuracy figure. 100% recall on 15 cases does not mean 100% on unseen questions.
+- **Small warehouse.** 11 tables and 1,174 rows. Retrieval at this size is easy; the
+  numbers do not predict behaviour on a schema with hundreds of tables.
+- **Not yet measured:** wrong-join and ambiguous-question failures. They show up only in
+  a full run, which needs an API key. Once it has been run, the failing questions and
+  their causes belong in `eval/results.md` and here.
 
 ## Design choices
 

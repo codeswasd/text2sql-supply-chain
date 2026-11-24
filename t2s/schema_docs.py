@@ -89,7 +89,8 @@ def build_docs(yaml_path: Path = YAML_PATH, ddl_path: Path = DDL_PATH) -> dict:
             if a in docs:
                 docs[a].related.add(b)
                 docs[a].joins.append(f"{b} ON {cond}")
-    return docs
+    csvs = {p.stem.upper() for p in (ROOT / "data").glob("*.csv")}  # only tables that exist in the warehouse
+    return {k: v for k, v in docs.items() if k in csvs}
 
 
 def custom_instructions(yaml_path: Path = YAML_PATH) -> str:
